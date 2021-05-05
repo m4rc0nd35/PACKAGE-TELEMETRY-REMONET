@@ -151,7 +151,6 @@ int linux_write(Network* n, unsigned char* buffer, int len, int timeout_ms)
   return rc;
 }
 
-
 void NetworkInit(Network* n)
 {
   n->my_socket = 0;

@@ -37,6 +37,14 @@
 #include <signal.h>
 #include <sys/time.h>
 
+#define MAC "B8:27:EB:E8:64:48"
+#define USER "radios"
+#define TOPIC_RETURN "/telemetry"
+#define TOPIC_COMMAND "/commands/all"
+#define PASSWORD "projecttrampolimdavitoria"
+#define HOST_MASTER "mqtt-srv1.remonet.com.br"
+#define HOST_SLAVE "mqtt-srv2.remonet.com.br"
+
 volatile int toStop = 0;
 Network network;
 MQTTClient mqtt;
@@ -54,11 +62,10 @@ struct opts_struct
 	int port;
 	int debug;
 } opts = {
-	(char *)"mqtt-srv1.remonet.com.br",
+	(char *)HOST_MASTER,
 	NULL,
 	1883,
-	0
-};
+	0};
 
 void getopts(int argc, char **argv)
 {
@@ -96,6 +103,20 @@ void printlog(const char *fmt, ...)
 	}
 }
 
+char *shell(char *command)
+{
+	FILE *file = popen(command, "r");
+	if (!file)
+		printf("popen failed!");
+
+	char return_cmm[4096];
+	while (!feof(file))
+		fgets(return_cmm, 4096, file);
+
+	pclose(file);
+	return return_cmm;
+}
+
 void messageArrived(MessageData *md)
 {
 	MQTTMessage *message = md->message;
@@ -103,38 +124,34 @@ void messageArrived(MessageData *md)
 	char buffer[256];
 	memset(buffer, 0, 256);
 	snprintf(buffer, (int)(message->payloadlen) + 1 > 254 ? 254 : (int)(message->payloadlen) + 1, "%s", (char *)message->payload);
+	printf("messageArrived %.*s\n", (int)strlen(buffer), (char *)buffer);
 
-	char runsys[512];
+	char runsys[4096];
 	sprintf(runsys, "%s ", "sh /usr/share/mqtt.sh");
 	strcat(runsys, buffer);
 	printlog("Running (%s)", runsys);
-	
-	char result[1024];
+
 	FILE *file = popen(runsys, "r");
 	if (!file)
 		printf("popen failed!");
 
-	char return_cmm[128];
+	char return_cmm[4096];
 	while (!feof(file))
-	{
-		if (fgets(return_cmm, 128, file) != NULL)
-		{
-			strncat(result, return_cmm, strlen(return_cmm));
-		}
-	}
-	pclose(file);
+		fgets(return_cmm, 4096, file);
 
-	char buf[strlen(return_cmm)];
-	sprintf(buf, "%s", return_cmm);
+	pclose(file);
+	
+	char bufW[4096];
+	sprintf(bufW, "%s", (char *)return_cmm);
 	MQTTMessage send_msg;
 	send_msg.qos = QOS0;
 	send_msg.retained = '0';
 	send_msg.dup = '0';
-	send_msg.payload = (void *)buf;
-	send_msg.payloadlen = strlen(buf) + 1;
-	MQTTPublish(&mqtt, "/telemetry", &send_msg);
+	send_msg.payload = (void *)bufW;
+	send_msg.payloadlen = strlen(bufW) + 1;
+	MQTTPublish(&mqtt, TOPIC_RETURN, &send_msg);
 
-	printf("messageArrived %.*s\n", (int)strlen(return_cmm), (char *)return_cmm);
+	printf("messageArrived %.*s\n", (int)send_msg.payloadlen, (char *)send_msg.payload);
 }
 
 int main(int argc, char **argv)
@@ -143,8 +160,8 @@ int main(int argc, char **argv)
 	{
 		toStop = 0;
 		int rc = 0;
-		unsigned char buf[100];
-		unsigned char readbuf[100];
+		unsigned char buf[4096];
+		unsigned char readbuf[4096];
 
 		char *topic = argv[1];
 
@@ -160,14 +177,14 @@ int main(int argc, char **argv)
 
 		NetworkInit(&network);
 		NetworkConnect(&network, opts.host, opts.port, opts.cafile);
-		MQTTClientInit(&mqtt, &network, 1000, buf, 100, readbuf, 100);
+		MQTTClientInit(&mqtt, &network, 1000, buf, 4096, readbuf, 4096);
 
 		MQTTPacket_connectData data = MQTTPacket_connectData_initializer;
 		data.willFlag = 0;
 		data.MQTTVersion = 3;
-		data.clientID.cstring = (char*)"B8:27:EB:E8:64:48";
-		data.username.cstring = (char*)"radios";
-		data.password.cstring = (char*)"projecttrampolimdavitoria";
+		data.clientID.cstring = (char *)MAC;
+		data.username.cstring = (char *)USER;
+		data.password.cstring = (char *)PASSWORD;
 
 		data.keepAliveInterval = 30;
 		data.cleansession = 1;
@@ -182,7 +199,7 @@ int main(int argc, char **argv)
 			exit(-1);
 		}
 
-		rc = MQTTSubscribe(&mqtt, "/commands/all", QOS0, messageArrived);
+		rc = MQTTSubscribe(&mqtt, TOPIC_COMMAND, QOS0, messageArrived);
 		if (rc < 0)
 		{
 			// Error on connect, print error
@@ -192,7 +209,7 @@ int main(int argc, char **argv)
 
 		while (!toStop)
 		{
-			rc = MQTTYield(&mqtt, 30000);
+			rc = MQTTYield(&mqtt, 1000);
 			if (rc != SUCCESS)
 			{
 				toStop = 1;
@@ -208,10 +225,10 @@ int main(int argc, char **argv)
 			closelog();
 		usleep(5 * 1000000);
 
-		if (strcmp(opts.host, "mqtt-srv1.remonet.com.br") == 0)
-			opts.host = "mqtt-srv2.remonet.com.br";
+		if (strcmp(opts.host, HOST_MASTER) == 0)
+			opts.host = HOST_SLAVE;
 		else
-			opts.host = "mqtt-srv1.remonet.com.br";
+			opts.host = HOST_MASTER;
 	}
 
 	return 0;
