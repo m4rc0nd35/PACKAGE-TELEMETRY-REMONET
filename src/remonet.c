@@ -37,10 +37,9 @@
 #include <signal.h>
 #include <sys/time.h>
 
-#define MAC "B8:27:EB:E8:64:48"
 #define USER "radios"
 #define TOPIC_RETURN "/telemetry"
-#define TOPIC_COMMAND "/commands/all"
+#define TOPIC_COMMAND "/commands/"
 #define PASSWORD "projecttrampolimdavitoria"
 #define HOST_MASTER "mqtt-srv1.remonet.com.br"
 #define HOST_SLAVE "mqtt-srv2.remonet.com.br"
@@ -103,7 +102,7 @@ void printlog(const char *fmt, ...)
 	}
 }
 
-char *shell(char *command)
+void shell(char *command)
 {
 	FILE *file = popen(command, "r");
 	if (!file)
@@ -114,7 +113,8 @@ char *shell(char *command)
 		fgets(return_cmm, 4096, file);
 
 	pclose(file);
-	return return_cmm;
+	memset(command, 0, sizeof command);
+	strcpy(command, return_cmm);
 }
 
 void messageArrived(MessageData *md)
@@ -124,34 +124,24 @@ void messageArrived(MessageData *md)
 	char buffer[256];
 	memset(buffer, 0, 256);
 	snprintf(buffer, (int)(message->payloadlen) + 1 > 254 ? 254 : (int)(message->payloadlen) + 1, "%s", (char *)message->payload);
-	printf("messageArrived %.*s\n", (int)strlen(buffer), (char *)buffer);
+	printlog("messageArrived %.*s\n", (int)strlen(buffer), (char *)buffer);
 
 	char runsys[4096];
 	sprintf(runsys, "%s ", "sh /usr/share/mqtt.sh");
 	strcat(runsys, buffer);
 	printlog("Running (%s)", runsys);
 
-	FILE *file = popen(runsys, "r");
-	if (!file)
-		printf("popen failed!");
+	shell(&runsys);
 
-	char return_cmm[4096];
-	while (!feof(file))
-		fgets(return_cmm, 4096, file);
-
-	pclose(file);
-	
-	char bufW[4096];
-	sprintf(bufW, "%s", (char *)return_cmm);
 	MQTTMessage send_msg;
 	send_msg.qos = QOS0;
 	send_msg.retained = '0';
 	send_msg.dup = '0';
-	send_msg.payload = (void *)bufW;
-	send_msg.payloadlen = strlen(bufW) + 1;
+	send_msg.payload = (void *)runsys;
+	send_msg.payloadlen = strlen(runsys) + 1;
 	MQTTPublish(&mqtt, TOPIC_RETURN, &send_msg);
 
-	printf("messageArrived %.*s\n", (int)send_msg.payloadlen, (char *)send_msg.payload);
+	printlog("messageArrived %.*s\n", (int)send_msg.payloadlen, (char *)send_msg.payload);
 }
 
 int main(int argc, char **argv)
@@ -162,27 +152,30 @@ int main(int argc, char **argv)
 		int rc = 0;
 		unsigned char buf[4096];
 		unsigned char readbuf[4096];
-
-		char *topic = argv[1];
+		char clientID[18];
+		memset(clientID, 0, sizeof clientID);
 
 		getopts(argc, argv);
 
 		if (!opts.debug)
 			openlog("MQTT", LOG_CONS | LOG_PID | LOG_NDELAY, LOG_LOCAL1);
 
-		printlog("topic is %s", topic);
+		char mac[128] = "awk '{print toupper($1)}' /sys/class/net/eth0/address";
+		// memset(mac, 0, sizeof mac);
+		shell(&mac);
 
 		signal(SIGINT, cfinish);
 		signal(SIGTERM, cfinish);
-
+		
 		NetworkInit(&network);
 		NetworkConnect(&network, opts.host, opts.port, opts.cafile);
 		MQTTClientInit(&mqtt, &network, 1000, buf, 4096, readbuf, 4096);
-
+		
+		strncat(clientID, mac, strlen(mac)-1);
 		MQTTPacket_connectData data = MQTTPacket_connectData_initializer;
 		data.willFlag = 0;
 		data.MQTTVersion = 3;
-		data.clientID.cstring = (char *)MAC;
+		data.clientID.cstring = (char *)clientID;
 		data.username.cstring = (char *)USER;
 		data.password.cstring = (char *)PASSWORD;
 
@@ -198,8 +191,10 @@ int main(int argc, char **argv)
 			printlog("ERROR: %s", strerror(errno));
 			exit(-1);
 		}
-
-		rc = MQTTSubscribe(&mqtt, TOPIC_COMMAND, QOS0, messageArrived);
+		// char topic[] = "/commands/";
+		// strcat(topic, mac);
+		// rc = MQTTSubscribe(&mqtt, topic, QOS0, messageArrived);
+		rc = MQTTSubscribe(&mqtt, "/commands/all", QOS0, messageArrived);
 		if (rc < 0)
 		{
 			// Error on connect, print error
