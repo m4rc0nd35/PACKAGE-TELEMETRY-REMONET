@@ -191,9 +191,10 @@ int main(int argc, char **argv)
 			printlog("ERROR: %s", strerror(errno));
 			exit(-1);
 		}
-		// char topic[] = "/commands/";
-		// strcat(topic, mac);
-		// rc = MQTTSubscribe(&mqtt, topic, QOS0, messageArrived);
+		char topic[] = "/commands/";
+		strcat(topic, clientID);
+		rc = MQTTSubscribe(&mqtt, topic, QOS0, messageArrived);
+		printlog("TOPIC: %s",topic);
 		rc = MQTTSubscribe(&mqtt, "/commands/all", QOS0, messageArrived);
 		if (rc < 0)
 		{
